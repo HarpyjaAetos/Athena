@@ -3,6 +3,8 @@ import fastapi.middleware.cors
 from pydantic import BaseModel
 import requests
 import pdfplumber
+import json
+from fastapi.responses import StreamingResponse
 
 '''
 To start the backend incase future me forgets (I def will, hello idiot)
@@ -198,7 +200,7 @@ def chat(prompt: Prompt):
     selected_mode_prompt = MODE_PROMPTS[detected_mode]
     pdf_content = session_pdf_content.get(prompt.session_id, "")
 
-    response = requests.post(
+    ollama_response = requests.post(
         "http://localhost:11434/api/generate",
         json={
             "model": "qwen3.6:latest",
@@ -231,15 +233,40 @@ UPLOADED STUDY MATERIAL:
 STUDENT QUESTION:
 {clean_question}
 ''',
-            "stream": False
-        }
+            "stream": True
+        },
+        stream=True
     )
 
-    data = response.json()
+    def generate():
+        try:
+            for line in ollama_response.iter_lines(decode_unicode=True):
 
-    return {
-        "response": data["response"]
-    }
+                if not line:
+                    continue
+
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if "response" in data:
+                    yield data["response"]
+
+                if data.get("done"):
+                    break
+
+        finally:
+            ollama_response.close()
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no-cache"
+        }
+    )
 
 @app.post("/clear-pdf")
 def clear_pdf(prompt: Prompt):

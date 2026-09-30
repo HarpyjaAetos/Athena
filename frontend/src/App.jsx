@@ -268,20 +268,23 @@ function App() {
   }
 
   async function sendMessage() {
-    if (!message.trim() || !activeSession) return;
+    if (!message.trim() || !activeSession || loading) return;
 
     const currentMessage = message.trim();
     const userMessage = {
       role: "user",
       content: currentMessage
     };
+
     const sessionId = activeSession.id;
     const shouldTitleSession = messages.length === 0;
     const responseMode = mode;
 
     updateSession(sessionId, (session) => ({
       ...session,
-      title: shouldTitleSession ? generateSessionTitle(currentMessage) : session.title,
+      title: shouldTitleSession
+        ? generateSessionTitle(currentMessage)
+        : session.title,
       messages: [...session.messages, userMessage],
       timestamp: Date.now()
     }));
@@ -289,43 +292,116 @@ function App() {
     setMessage("");
     setLoading(true);
 
+    // Create the assistant message before streaming starts
+    updateSession(sessionId, (session) => ({
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          role: "assistant",
+          content: ""
+        }
+      ],
+      timestamp: Date.now()
+    }));
+
     try {
-      const res = await axios.post(
+      const response = await fetch(
         "http://127.0.0.1:8000/chat",
         {
-          session_id: sessionId,
-          message: `[MODE: ${responseMode}] ${currentMessage}`
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: `[MODE: ${responseMode}] ${currentMessage}`
+          })
         }
       );
 
-      const aiMessage = {
-        role: "assistant",
-        content: res.data.response
-      };
+      if (!response.ok) {
+        throw new Error(
+          `Chat request failed with status ${response.status}`
+        );
+      }
+
+      if (!response.body) {
+        throw new Error(
+          "Chat response did not contain a readable stream."
+        );
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let assistantContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) break;
+
+        assistantContent += decoder.decode(value, {
+          stream: true
+        });
+
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: session.messages.map((item, index) =>
+            index === session.messages.length - 1 &&
+            item.role === "assistant"
+              ? {
+                  ...item,
+                  content: assistantContent
+                }
+              : item
+          ),
+          timestamp: Date.now()
+        }));
+      }
+
+      // Flush remaining decoder data
+      assistantContent += decoder.decode();
 
       updateSession(sessionId, (session) => ({
         ...session,
-        messages: [...session.messages, aiMessage],
+        messages: session.messages.map((item, index) =>
+          index === session.messages.length - 1 &&
+          item.role === "assistant"
+            ? {
+                ...item,
+                content:
+                  assistantContent ||
+                  "Athena returned an empty response."
+              }
+            : item
+        ),
         timestamp: Date.now()
       }));
+
     } catch (error) {
-      console.error(error);
-
-      const errorMessage = {
-        role: "assistant",
-        content: "Athena encountered an error while generating a response."
-      };
+      console.error("Athena streaming error:", error);
 
       updateSession(sessionId, (session) => ({
         ...session,
-        messages: [...session.messages, errorMessage],
+        messages: session.messages.map((item, index) =>
+          index === session.messages.length - 1 &&
+          item.role === "assistant"
+            ? {
+                ...item,
+                content:
+                  "Athena encountered an error while generating a response."
+              }
+            : item
+        ),
         timestamp: Date.now()
       }));
+
     } finally {
       setLoading(false);
     }
   }
-
   async function uploadFile(event) {
     const file = event.target.files[0];
 
@@ -516,12 +592,6 @@ function App() {
                 )}
               </div>
             ))}
-
-            {loading && (
-              <div className="athena-fade-in max-w-[850px] bg-[#fffdf8] border border-[rgba(184,146,63,0.12)] rounded-[28px] px-6 py-[18px] text-[#756a5b] animate-pulse shadow-[0_10px_30px_rgba(0,0,0,0.04)]">
-                Athena is analyzing your request...
-              </div>
-            )}
           </div>
         </div>
 
