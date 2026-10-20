@@ -579,6 +579,13 @@ function App() {
                 }`}
               >
                 {msg.role === "assistant" ? (
+              <>
+                  {index === messages.length - 1 && loading && !msg.content && (
+                    <p className="text-sm italic text-[#9b8f7b]">
+                      Waiting...
+                    </p>
+                  )}
+
                   <div className="prose max-w-none prose-headings:font-brand prose-headings:text-[#a9832f] prose-p:text-[#3d3832] prose-strong:text-[#2d2923] prose-li:text-[#3d3832]">
                     <ReactMarkdown
                       remarkPlugins={[remarkMath]}
@@ -587,9 +594,10 @@ function App() {
                       {msg.content}
                     </ReactMarkdown>
                   </div>
-                ) : (
-                  <p>{msg.content}</p>
-                )}
+                </>
+              ) : (
+                <p>{msg.content}</p>
+              )}
               </div>
             ))}
           </div>
